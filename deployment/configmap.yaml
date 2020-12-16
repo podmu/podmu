@@ -1,10 +1,10 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: sidecar-injector-webhook-configmap
-  namespace: sidecar-injector
+  name: containers-mutator-configmap
+  namespace: containers-mutator
 data:
-  sidecarconfig.yaml: |
+  mutator.config.yaml: |
     containers:
     - name: sidecar-nginx
       image: nginx:1.12.2

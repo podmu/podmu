@@ -1,15 +1,15 @@
 apiVersion: admissionregistration.k8s.io/v1beta1
 kind: MutatingWebhookConfiguration
 metadata:
-  name: sidecar-injector-webhook-cfg
+  name: containers-mutator-cfg
   labels:
-    app: sidecar-injector
+    app: containers-mutator
 webhooks:
-- name: sidecar-injector.morven.me
+- name: containers-mutator.khanhngobackend.io
   clientConfig:
     service:
-      name: sidecar-injector-webhook-svc
-      namespace: sidecar-injector
+      name: containers-mutator-svc
+      namespace: containers-mutator
       path: "/mutate"
     caBundle: ${CA_BUNDLE}
   rules:
@@ -17,6 +17,9 @@ webhooks:
     apiGroups: [""]
     apiVersions: ["v1"]
     resources: ["pods"]
+  objectSelector:
+    matchLabels:
+      containers-mutator: enabled
   namespaceSelector:
     matchLabels:
-      sidecar-injection: enabled
+      containers-mutator: enabled

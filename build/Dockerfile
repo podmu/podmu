@@ -1,25 +1,25 @@
 FROM alpine:latest
 
 # set labels for metadata
-LABEL maintainer="Morven Cao<morvencao@gmail.com>" \
-  name="sidecar-injector" \
-  description="A Kubernetes mutating webhook server that implements sidecar injection" \
-  summary="A Kubernetes mutating webhook server that implements sidecar injection"
+LABEL maintainer="Khanh Ngo<khanhngobackend@gmail.com>" \
+  name="containers-mutator" \
+  description="" \
+  summary=""
 
 # set environment variables
-ENV SIDECAR_INJECTOR=/usr/local/bin/sidecar-injector \
+ENV BINARY_LOCATION=/usr/local/bin/containers-mutator \
   USER_UID=1001 \
-  USER_NAME=sidecar-injector
+  USER_NAME=containers-mutator
 
-# install sidecar-injector binary
-COPY build/_output/bin/sidecar-injector ${SIDECAR_INJECTOR}
+# install containers-mutator binary
+COPY build/_output/bin/containers-mutator ${BINARY_LOCATION}
 
 # copy licenses
 RUN mkdir /licenses
 COPY LICENSE /licenses
 
 # set entrypoint
-ENTRYPOINT ["/usr/local/bin/sidecar-injector"]
+ENTRYPOINT ["/usr/local/bin/containers-mutator"]
 
 # switch to non-root user
 USER ${USER_UID}

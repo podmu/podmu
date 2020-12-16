@@ -16,7 +16,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
-	"k8s.io/kubernetes/pkg/apis/core/v1"
+	v1 "k8s.io/kubernetes/pkg/apis/core/v1"
 )
 
 var (
@@ -52,8 +52,9 @@ type WhSvrParameters struct {
 }
 
 type Config struct {
-	Containers []corev1.Container `yaml:"containers"`
-	Volumes    []corev1.Volume    `yaml:"volumes"`
+	InitContainers []corev1.Container `yaml:"containers"`
+	Containers     []corev1.Container `yaml:"containers"`
+	Volumes        []corev1.Volume    `yaml:"volumes"`
 }
 
 type patchOperation struct {
@@ -129,10 +130,55 @@ func mutationRequired(ignoredList []string, metadata *metav1.ObjectMeta) bool {
 	return required
 }
 
-func addContainer(target, added []corev1.Container, basePath string) (patch []patchOperation) {
-	first := len(target) == 0
+func editContainerResources(targets, edits []corev1.Container, basePath string) (patch []patchOperation) {
 	var value interface{}
+	for idx, target := range targets {
+		name := target.Name
+		for _, edit := range edits {
+			if edit.Name != name {
+				continue
+			}
+			resourcesPath := fmt.Sprintf("%s/%d/resources", basePath, idx)
+			for key, val := range edit.Resources.Requests {
+				path := fmt.Sprintf("%s/requests/%s", resourcesPath, key)
+				value = val
+				patch = append(patch, patchOperation{
+					Op:    "replace",
+					Path:  path,
+					Value: value,
+				})
+			}
+			for key, val := range edit.Resources.Limits {
+				path := fmt.Sprintf("%s/limits/%s", resourcesPath, key)
+				value = val
+				patch = append(patch, patchOperation{
+					Op:    "replace",
+					Path:  path,
+					Value: value,
+				})
+			}
+		}
+
+	}
+	return patch
+}
+
+func addContainer(targets, added []corev1.Container, basePath string) (patch []patchOperation) {
+	first := len(targets) == 0
+	var value interface{}
+added_loop:
 	for _, add := range added {
+		if add.Image == "" {
+			// only add if Image is defined, otherwise, treat it as modification to Resources field
+			continue added_loop
+		}
+
+		for _, target := range targets {
+			if add.Name == target.Name {
+				// skipping due to naming conflict
+				continue added_loop
+			}
+		}
 		value = add
 		path := basePath
 		if first {
@@ -198,6 +244,9 @@ func createPatch(pod *corev1.Pod, sidecarConfig *Config, annotations map[string]
 	var patch []patchOperation
 
 	patch = append(patch, addContainer(pod.Spec.Containers, sidecarConfig.Containers, "/spec/containers")...)
+	patch = append(patch, addContainer(pod.Spec.InitContainers, sidecarConfig.InitContainers, "/spec/initContainers")...)
+	patch = append(patch, editContainerResources(pod.Spec.Containers, sidecarConfig.Containers, "/spec/containers")...)
+	patch = append(patch, editContainerResources(pod.Spec.InitContainers, sidecarConfig.InitContainers, "/spec/initContainers")...)
 	patch = append(patch, addVolume(pod.Spec.Volumes, sidecarConfig.Volumes, "/spec/volumes")...)
 	patch = append(patch, updateAnnotation(pod.Annotations, annotations)...)
 
