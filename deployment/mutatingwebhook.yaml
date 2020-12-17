@@ -1,15 +1,15 @@
 apiVersion: admissionregistration.k8s.io/v1beta1
 kind: MutatingWebhookConfiguration
 metadata:
-  name: containers-mutator-cfg
+  name: podmu-cfg
   labels:
-    app: containers-mutator
+    app: podmu
 webhooks:
-- name: containers-mutator.khanhngobackend.io
+- name: podmu
   clientConfig:
     service:
-      name: containers-mutator-svc
-      namespace: containers-mutator
+      name: podmu-svc
+      namespace: podmu
       path: "/mutate"
     caBundle: ${CA_BUNDLE}
   rules:
@@ -17,9 +17,12 @@ webhooks:
     apiGroups: [""]
     apiVersions: ["v1"]
     resources: ["pods"]
-  objectSelector:
-    matchLabels:
-      containers-mutator: enabled
+  # objectSelector: # for further narrowing down selected objects
+  #   matchLabels:
+  #     podmu: enabled
   namespaceSelector:
     matchLabels:
-      containers-mutator: enabled
+      podmu: enabled
+
+# Add the following label to indicate which namespace podmu should operate on:
+#   podmu: enabled

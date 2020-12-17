@@ -1,8 +1,8 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: containers-mutator-configmap
-  namespace: containers-mutator
+  name: podmu-configmap
+  namespace: podmu
 data:
   mutator.config.yaml: |
     containers:
@@ -18,3 +18,21 @@ data:
     - name: nginx-conf
       configMap:
         name: nginx-configmap
+
+# in order to choose which config file to use for mutation, add the following annotations to your Pod object:
+#   podmu/inject: mutator.config.yaml
+# or you can add the config content above directly to the `podmu/override` annotation like below:
+# podmu/override: |
+#   containers:
+#   - name: sidecar-nginx
+#     image: nginx:1.12.2
+#     imagePullPolicy: IfNotPresent
+#     ports:
+#     - containerPort: 80
+#     volumeMounts:
+#     - name: nginx-conf
+#       mountPath: /etc/nginx
+#   volumes:
+#   - name: nginx-conf
+#     configMap:
+#       name: nginx-configmap

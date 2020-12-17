@@ -1,27 +1,27 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: containers-mutator-deployment
-  namespace: containers-mutator
+  name: podmu-deployment
+  namespace: podmu
   labels:
-    app: containers-mutator
+    app: podmu
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: containers-mutator
+      app: podmu
   template:
     metadata:
       labels:
-        app: containers-mutator
+        app: podmu
     spec:
       containers:
-        - name: containers-mutator
-          image: khanhngobackend/containers-mutator:latest
+        - name: podmu
+          image: khanhngobackend/podmu:latest
           imagePullPolicy: IfNotPresent
           args:
           - -port=8443
-          - -sidecarCfgFile=/etc/webhook/config/mutator.config.yaml
+          - -cfgDir=/etc/webhook/config
           - -tlsCertFile=/etc/webhook/certs/cert.pem
           - -tlsKeyFile=/etc/webhook/certs/key.pem
           - -alsologtostderr
@@ -33,10 +33,11 @@ spec:
             readOnly: true
           - name: webhook-config
             mountPath: /etc/webhook/config
+            readOnly: true
       volumes:
       - name: webhook-certs
         secret:
-          secretName: containers-mutator-certs
+          secretName: podmu-certs
       - name: webhook-config
         configMap:
-          name: containers-mutator-configmap
+          name: podmu-configmap

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"path/filepath"
 	"strings"
 
 	"github.com/ghodss/yaml"
@@ -16,7 +17,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
-	v1 "k8s.io/kubernetes/pkg/apis/core/v1"
 )
 
 var (
@@ -28,33 +28,34 @@ var (
 	defaulter = runtime.ObjectDefaulter(runtimeScheme)
 )
 
-var ignoredNamespaces = []string{
+var strictlyIgnoredNamespaces = []string{
 	metav1.NamespaceSystem,
 	metav1.NamespacePublic,
 }
 
 const (
-	admissionWebhookAnnotationInjectKey = "sidecar-injector-webhook.morven.me/inject"
-	admissionWebhookAnnotationStatusKey = "sidecar-injector-webhook.morven.me/status"
+	admissionWebhookAnnotationInjectKey   = "podmu/inject"
+	admissionWebhookAnnotationStatusKey   = "podmu/status"
+	admissionWebhookAnnotationOverrideKey = "podmu/override"
 )
 
 type WebhookServer struct {
-	sidecarConfig *Config
-	server        *http.Server
+	server *http.Server
 }
 
 // Webhook Server parameters
 type WhSvrParameters struct {
-	port           int    // webhook server port
-	certFile       string // path to the x509 certificate for https
-	keyFile        string // path to the x509 private key matching `CertFile`
-	sidecarCfgFile string // path to sidecar injector configuration file
+	port     int    // webhook server port
+	certFile string // path to the x509 certificate for https
+	keyFile  string // path to the x509 private key matching `CertFile`
+	cfgDir   string // path to configuration dir
 }
 
 type Config struct {
-	InitContainers []corev1.Container `yaml:"containers"`
-	Containers     []corev1.Container `yaml:"containers"`
-	Volumes        []corev1.Volume    `yaml:"volumes"`
+	InitContainers  []corev1.Container         `yaml:"initContainers,omitempty"`
+	Containers      []corev1.Container         `yaml:"containers,omitempty"`
+	Volumes         []corev1.Volume            `yaml:"volumes,omitempty"`
+	SecurityContext *corev1.PodSecurityContext `yaml:"securityContext,omitempty"`
 }
 
 type patchOperation struct {
@@ -68,7 +69,7 @@ func init() {
 	_ = admissionregistrationv1beta1.AddToScheme(runtimeScheme)
 	// defaulting with webhooks:
 	// https://github.com/kubernetes/kubernetes/issues/57982
-	_ = v1.AddToScheme(runtimeScheme)
+	_ = corev1.AddToScheme(runtimeScheme)
 }
 
 // (https://github.com/kubernetes/kubernetes/issues/57982)
@@ -81,7 +82,11 @@ func applyDefaultsWorkaround(containers []corev1.Container, volumes []corev1.Vol
 	})
 }
 
-func loadConfig(configFile string) (*Config, error) {
+func loadConfig(configFile string, configContentOverride string) (*Config, error) {
+	var data []byte
+	if configContentOverride != "" {
+		data = ([]byte)(configContentOverride)
+	}
 	data, err := ioutil.ReadFile(configFile)
 	if err != nil {
 		return nil, err
@@ -97,12 +102,14 @@ func loadConfig(configFile string) (*Config, error) {
 }
 
 // Check whether the target resoured need to be mutated
-func mutationRequired(ignoredList []string, metadata *metav1.ObjectMeta) bool {
+func mutationRequired(ignoredList []string, metadata *metav1.ObjectMeta) (required bool, cfgFileName, cfgContent string) {
+	required = false
+
 	// skip special kubernete system namespaces
 	for _, namespace := range ignoredList {
 		if metadata.Namespace == namespace {
 			glog.Infof("Skip mutation for %v for it's in special namespace:%v", metadata.Name, metadata.Namespace)
-			return false
+			return
 		}
 	}
 
@@ -114,20 +121,172 @@ func mutationRequired(ignoredList []string, metadata *metav1.ObjectMeta) bool {
 	status := annotations[admissionWebhookAnnotationStatusKey]
 
 	// determine whether to perform mutation based on annotation for the target resource
-	var required bool
-	if strings.ToLower(status) == "injected" {
-		required = false
-	} else {
-		switch strings.ToLower(annotations[admissionWebhookAnnotationInjectKey]) {
-		default:
-			required = false
-		case "y", "yes", "true", "on":
+	if strings.ToLower(status) != "injected" {
+		cfgFileName = annotations[admissionWebhookAnnotationInjectKey]
+		cfgContent = annotations[admissionWebhookAnnotationOverrideKey]
+		if cfgFileName != "" || cfgContent != "" {
 			required = true
 		}
 	}
 
-	glog.Infof("Mutation policy for %v/%v: status: %q required:%v", metadata.Namespace, metadata.Name, status, required)
-	return required
+	glog.Infof("Mutation policy for %v/%v: status: %q required: %v cfgFileName: %v", metadata.Namespace, metadata.Name, status, required, cfgFileName)
+	return
+}
+
+func editPodSecurityContext(target, edit *corev1.PodSecurityContext, basePath string) (patch []patchOperation) {
+	if edit == nil {
+		return nil
+	}
+	if edit.RunAsUser != nil {
+		patch = append(patch, patchOperation{
+			Op:    "replace",
+			Path:  fmt.Sprintf("%s/%s", basePath, "runAsUser"),
+			Value: *edit.RunAsUser,
+		})
+	}
+	if edit.RunAsGroup != nil {
+		patch = append(patch, patchOperation{
+			Op:    "replace",
+			Path:  fmt.Sprintf("%s/%s", basePath, "runAsGroup"),
+			Value: *edit.RunAsGroup,
+		})
+	}
+	if edit.RunAsNonRoot != nil {
+		patch = append(patch, patchOperation{
+			Op:    "replace",
+			Path:  fmt.Sprintf("%s/%s", basePath, "runAsNonRoot"),
+			Value: *edit.RunAsNonRoot,
+		})
+	}
+SUPPLE_EDIT_LOOP:
+	for _, groupID := range edit.SupplementalGroups {
+		for _, targetGroupID := range target.SupplementalGroups {
+			if targetGroupID == groupID { // this group existed
+				// -> skip
+				continue SUPPLE_EDIT_LOOP
+			}
+		}
+		patch = append(patch, patchOperation{
+			Op:    "add",
+			Path:  fmt.Sprintf("%s/%s/-", basePath, "supplementalGroups"),
+			Value: groupID,
+		})
+	}
+	if edit.FSGroup != nil {
+		patch = append(patch, patchOperation{
+			Op:    "replace",
+			Path:  fmt.Sprintf("%s/%s", basePath, "fsGroup"),
+			Value: *edit.FSGroup,
+		})
+	}
+	if edit.FSGroupChangePolicy != nil {
+		patch = append(patch, patchOperation{
+			Op:    "replace",
+			Path:  fmt.Sprintf("%s/%s", basePath, "fsGroupChangePolicy"),
+			Value: *edit.FSGroupChangePolicy,
+		})
+	}
+	if len(edit.Sysctls) != 0 {
+		sysctlsPath := fmt.Sprintf("%s/%s", basePath, "sysctls")
+		if len(target.Sysctls) == 0 {
+			patch = append(patch, patchOperation{
+				Op:    "replace",
+				Path:  sysctlsPath,
+				Value: edit.Sysctls,
+			})
+		} else { // len(target.Sysctls) != 0
+		SYSCTL_EDIT_LOOP:
+			for _, editSysctl := range edit.Sysctls {
+				for idx, targetSysctl := range target.Sysctls {
+					if targetSysctl.Name != editSysctl.Name {
+						continue
+					}
+					patch = append(patch, patchOperation{
+						Op:    "replace",
+						Path:  fmt.Sprintf("%s/%d/value", sysctlsPath, idx),
+						Value: editSysctl.Value,
+					})
+					continue SYSCTL_EDIT_LOOP
+				}
+				patch = append(patch, patchOperation{
+					Op:    "add",
+					Path:  fmt.Sprintf("%s/-", sysctlsPath),
+					Value: editSysctl,
+				})
+			}
+		}
+	}
+	return patch
+}
+
+func editSecurityContext(edit *corev1.SecurityContext, basePath string) (patch []patchOperation) {
+	if edit == nil {
+		return nil
+	}
+	if edit.Privileged != nil {
+		patch = append(patch, patchOperation{
+			Op:    "replace",
+			Path:  fmt.Sprintf("%s/%s", basePath, "privileged"),
+			Value: *edit.Privileged,
+		})
+	}
+	if edit.RunAsUser != nil {
+		patch = append(patch, patchOperation{
+			Op:    "replace",
+			Path:  fmt.Sprintf("%s/%s", basePath, "runAsUser"),
+			Value: *edit.RunAsUser,
+		})
+	}
+	if edit.RunAsGroup != nil {
+		patch = append(patch, patchOperation{
+			Op:    "replace",
+			Path:  fmt.Sprintf("%s/%s", basePath, "runAsGroup"),
+			Value: *edit.RunAsGroup,
+		})
+	}
+	if edit.RunAsNonRoot != nil {
+		patch = append(patch, patchOperation{
+			Op:    "replace",
+			Path:  fmt.Sprintf("%s/%s", basePath, "runAsNonRoot"),
+			Value: *edit.RunAsNonRoot,
+		})
+	}
+	if edit.ReadOnlyRootFilesystem != nil {
+		patch = append(patch, patchOperation{
+			Op:    "replace",
+			Path:  fmt.Sprintf("%s/%s", basePath, "readOnlyRootFilesystem"),
+			Value: *edit.ReadOnlyRootFilesystem,
+		})
+	}
+	if edit.AllowPrivilegeEscalation != nil {
+		patch = append(patch, patchOperation{
+			Op:    "replace",
+			Path:  fmt.Sprintf("%s/%s", basePath, "allowPrivilegeEscalation"),
+			Value: *edit.AllowPrivilegeEscalation,
+		})
+	}
+	if edit.ProcMount != nil {
+		patch = append(patch, patchOperation{
+			Op:    "replace",
+			Path:  fmt.Sprintf("%s/%s", basePath, "procMount"),
+			Value: *edit.ProcMount,
+		})
+	}
+	return patch
+}
+
+func editContainerSecurityContext(targets, edits []corev1.Container, basePath string) (patch []patchOperation) {
+	for idx, target := range targets {
+		name := target.Name
+		for _, edit := range edits {
+			if edit.Name != name {
+				continue
+			}
+			secCtxPath := fmt.Sprintf("%s/%d/securityContext", basePath, idx)
+			patch = append(patch, editSecurityContext(edit.SecurityContext, secCtxPath)...)
+		}
+	}
+	return patch
 }
 
 func editContainerResources(targets, edits []corev1.Container, basePath string) (patch []patchOperation) {
@@ -240,14 +399,20 @@ func updateAnnotation(target map[string]string, added map[string]string) (patch 
 }
 
 // create mutation patch for resoures
-func createPatch(pod *corev1.Pod, sidecarConfig *Config, annotations map[string]string) ([]byte, error) {
+func createPatch(pod *corev1.Pod, cfg *Config, annotations map[string]string) ([]byte, error) {
 	var patch []patchOperation
 
-	patch = append(patch, addContainer(pod.Spec.Containers, sidecarConfig.Containers, "/spec/containers")...)
-	patch = append(patch, addContainer(pod.Spec.InitContainers, sidecarConfig.InitContainers, "/spec/initContainers")...)
-	patch = append(patch, editContainerResources(pod.Spec.Containers, sidecarConfig.Containers, "/spec/containers")...)
-	patch = append(patch, editContainerResources(pod.Spec.InitContainers, sidecarConfig.InitContainers, "/spec/initContainers")...)
-	patch = append(patch, addVolume(pod.Spec.Volumes, sidecarConfig.Volumes, "/spec/volumes")...)
+	patch = append(patch, addContainer(pod.Spec.Containers, cfg.Containers, "/spec/containers")...)
+	patch = append(patch, addContainer(pod.Spec.InitContainers, cfg.InitContainers, "/spec/initContainers")...)
+
+	patch = append(patch, editContainerResources(pod.Spec.Containers, cfg.Containers, "/spec/containers")...)
+	patch = append(patch, editContainerResources(pod.Spec.InitContainers, cfg.InitContainers, "/spec/initContainers")...)
+
+	patch = append(patch, editContainerSecurityContext(pod.Spec.Containers, cfg.Containers, "/spec/containers")...)
+	patch = append(patch, editContainerSecurityContext(pod.Spec.InitContainers, cfg.InitContainers, "/spec/initContainers")...)
+
+	patch = append(patch, editPodSecurityContext(pod.Spec.SecurityContext, cfg.SecurityContext, "/spec/securityContext")...)
+	patch = append(patch, addVolume(pod.Spec.Volumes, cfg.Volumes, "/spec/volumes")...)
 	patch = append(patch, updateAnnotation(pod.Annotations, annotations)...)
 
 	return json.Marshal(patch)
@@ -269,19 +434,30 @@ func (whsvr *WebhookServer) mutate(ar *v1beta1.AdmissionReview) *v1beta1.Admissi
 	glog.Infof("AdmissionReview for Kind=%v, Namespace=%v Name=%v (%v) UID=%v patchOperation=%v UserInfo=%v",
 		req.Kind, req.Namespace, req.Name, pod.Name, req.UID, req.Operation, req.UserInfo)
 
+	var (
+		required           bool
+		cfgFileName        string
+		cfgContentOverride string
+	)
 	// determine whether to perform mutation
-	if !mutationRequired(ignoredNamespaces, &pod.ObjectMeta) {
+	if required, cfgFileName, cfgContentOverride = mutationRequired(strictlyIgnoredNamespaces, &pod.ObjectMeta); !required {
 		glog.Infof("Skipping mutation for %s/%s due to policy check", pod.Namespace, pod.Name)
 		return &v1beta1.AdmissionResponse{
 			Allowed: true,
 		}
 	}
 
-	// Workaround: https://github.com/kubernetes/kubernetes/issues/57982
-	applyDefaultsWorkaround(whsvr.sidecarConfig.Containers, whsvr.sidecarConfig.Volumes)
-	annotations := map[string]string{admissionWebhookAnnotationStatusKey: "injected"}
-	patchBytes, err := createPatch(&pod, whsvr.sidecarConfig, annotations)
+	cfg, err := loadConfig(filepath.Join(parameters.cfgDir, cfgFileName), cfgContentOverride)
 	if err != nil {
+		glog.Errorf("Failed to load configuration `%s`: %v", cfgFileName, err)
+	}
+
+	// Workaround: https://github.com/kubernetes/kubernetes/issues/57982
+	applyDefaultsWorkaround(cfg.Containers, cfg.Volumes)
+	annotations := map[string]string{admissionWebhookAnnotationStatusKey: "injected"}
+	patchBytes, err := createPatch(&pod, cfg, annotations)
+	if err != nil {
+		glog.Errorf("Mutation failed on ")
 		return &v1beta1.AdmissionResponse{
 			Result: &metav1.Status{
 				Message: err.Error(),
@@ -308,6 +484,7 @@ func (whsvr *WebhookServer) serve(w http.ResponseWriter, r *http.Request) {
 			body = data
 		}
 	}
+
 	if len(body) == 0 {
 		glog.Error("empty body")
 		http.Error(w, "empty body", http.StatusBadRequest)

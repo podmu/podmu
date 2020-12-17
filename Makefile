@@ -2,7 +2,7 @@
 # Use your own docker registry and image name for dev/test by overridding the
 # IMAGE_REPO, IMAGE_NAME and IMAGE_TAG environment variable.
 IMAGE_REPO ?= docker.io/khanhngobackend
-IMAGE_NAME ?= containers-mutator
+IMAGE_NAME ?= podmu
 
 # Github host to use for checking the source tree;
 # Override this variable ue with your own value if you're working on forked repo.
@@ -90,6 +90,7 @@ push-image: build-image
 ############################################################
 clean:
 	@rm -rf build/_output
+	@rm -rf .go
 
 .PHONY: all fmt lint check test build image clean
 
