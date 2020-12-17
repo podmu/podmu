@@ -279,7 +279,8 @@ func editContainerSecurityContext(targets, edits []corev1.Container, basePath st
 	for idx, target := range targets {
 		name := target.Name
 		for _, edit := range edits {
-			if edit.Name != name {
+			// container edits specified without a name or an empty name will override all other existing target containers
+			if edit.Name != "" && edit.Name != name {
 				continue
 			}
 			secCtxPath := fmt.Sprintf("%s/%d/securityContext", basePath, idx)
@@ -294,7 +295,8 @@ func editContainerResources(targets, edits []corev1.Container, basePath string) 
 	for idx, target := range targets {
 		name := target.Name
 		for _, edit := range edits {
-			if edit.Name != name {
+			// container edits specified without a name or an empty name will override all other existing target containers
+			if edit.Name != "" && edit.Name != name {
 				continue
 			}
 			resourcesPath := fmt.Sprintf("%s/%d/resources", basePath, idx)
@@ -411,9 +413,10 @@ func createPatch(pod *corev1.Pod, cfg *Config, annotations map[string]string) ([
 	patch = append(patch, editContainerSecurityContext(pod.Spec.Containers, cfg.Containers, "/spec/containers")...)
 	patch = append(patch, editContainerSecurityContext(pod.Spec.InitContainers, cfg.InitContainers, "/spec/initContainers")...)
 
-	patch = append(patch, editPodSecurityContext(pod.Spec.SecurityContext, cfg.SecurityContext, "/spec/securityContext")...)
 	patch = append(patch, addVolume(pod.Spec.Volumes, cfg.Volumes, "/spec/volumes")...)
-	patch = append(patch, updateAnnotation(pod.Annotations, annotations)...)
+	patch = append(patch, editPodSecurityContext(pod.Spec.SecurityContext, cfg.SecurityContext, "/spec/securityContext")...)
+
+	patch = append(patch, updateAnnotation(pod.Annotations, annotations)...) // adding "podmu/status: injected"
 
 	return json.Marshal(patch)
 }
