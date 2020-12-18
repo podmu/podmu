@@ -85,15 +85,21 @@ func applyDefaultsWorkaround(containers []corev1.Container, volumes []corev1.Vol
 }
 
 func loadConfig(configFile string, configContentOverride string) (*Config, error) {
-	var data []byte
+	var (
+		err  error
+		data []byte
+	)
 	if configContentOverride != "" {
 		data = ([]byte)(configContentOverride)
+		glog.Infof("Using config content override: sha256sum %x", sha256.Sum256(data))
+	} else {
+		data, err = ioutil.ReadFile(configFile)
+		if err != nil {
+			glog.Infof("Failed to load config from file `%s`: %v", configFile, err)
+			return nil, err
+		}
+		glog.Infof("Using configuration loaded from file `%s`: sha256sum %x", configFile, sha256.Sum256(data))
 	}
-	data, err := ioutil.ReadFile(configFile)
-	if err != nil {
-		return nil, err
-	}
-	glog.Infof("New configuration: sha256sum %x", sha256.Sum256(data))
 
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
@@ -462,7 +468,7 @@ func (whsvr *WebhookServer) mutate(ar *v1beta1.AdmissionReview) *v1beta1.Admissi
 	)
 	cfg, err := loadConfig(filepath.Join(parameters.cfgDir, cfgFileName), cfgContentOverride)
 	if err != nil {
-		glog.Errorf("Failed to load configuration `%s`: %v", cfgFileName, err)
+		glog.Errorf("Failed to load/parse configuration: %v", err)
 		annotations := map[string]string{admissionWebhookAnnotationErrorKey: "loadConfig error: " + err.Error()}
 		patchBytes, err = createPatch(&pod, nil, annotations)
 		if err != nil {
