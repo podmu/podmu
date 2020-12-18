@@ -67,7 +67,7 @@ test:
 
 build:
 	@echo "Building the $(IMAGE_NAME) binary..."
-	@CGO_ENABLED=0 go build -o build/_output/bin/$(IMAGE_NAME) ./cmd/
+	@CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o build/_output/bin/$(IMAGE_NAME) ./cmd/
 
 ############################################################
 # image section

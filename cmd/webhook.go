@@ -37,6 +37,7 @@ const (
 	admissionWebhookAnnotationInjectKey   = "podmu/inject"
 	admissionWebhookAnnotationStatusKey   = "podmu/status"
 	admissionWebhookAnnotationOverrideKey = "podmu/override"
+	admissionWebhookAnnotationErrorKey    = "podmu/error"
 )
 
 type WebhookServer struct {
@@ -404,19 +405,23 @@ func updateAnnotation(target map[string]string, added map[string]string) (patch 
 func createPatch(pod *corev1.Pod, cfg *Config, annotations map[string]string) ([]byte, error) {
 	var patch []patchOperation
 
-	patch = append(patch, addContainer(pod.Spec.Containers, cfg.Containers, "/spec/containers")...)
-	patch = append(patch, addContainer(pod.Spec.InitContainers, cfg.InitContainers, "/spec/initContainers")...)
+	if cfg != nil {
+		patch = append(patch, addContainer(pod.Spec.Containers, cfg.Containers, "/spec/containers")...)
+		patch = append(patch, addContainer(pod.Spec.InitContainers, cfg.InitContainers, "/spec/initContainers")...)
 
-	patch = append(patch, editContainerResources(pod.Spec.Containers, cfg.Containers, "/spec/containers")...)
-	patch = append(patch, editContainerResources(pod.Spec.InitContainers, cfg.InitContainers, "/spec/initContainers")...)
+		patch = append(patch, editContainerResources(pod.Spec.Containers, cfg.Containers, "/spec/containers")...)
+		patch = append(patch, editContainerResources(pod.Spec.InitContainers, cfg.InitContainers, "/spec/initContainers")...)
 
-	patch = append(patch, editContainerSecurityContext(pod.Spec.Containers, cfg.Containers, "/spec/containers")...)
-	patch = append(patch, editContainerSecurityContext(pod.Spec.InitContainers, cfg.InitContainers, "/spec/initContainers")...)
+		patch = append(patch, editContainerSecurityContext(pod.Spec.Containers, cfg.Containers, "/spec/containers")...)
+		patch = append(patch, editContainerSecurityContext(pod.Spec.InitContainers, cfg.InitContainers, "/spec/initContainers")...)
 
-	patch = append(patch, addVolume(pod.Spec.Volumes, cfg.Volumes, "/spec/volumes")...)
-	patch = append(patch, editPodSecurityContext(pod.Spec.SecurityContext, cfg.SecurityContext, "/spec/securityContext")...)
+		patch = append(patch, addVolume(pod.Spec.Volumes, cfg.Volumes, "/spec/volumes")...)
+		patch = append(patch, editPodSecurityContext(pod.Spec.SecurityContext, cfg.SecurityContext, "/spec/securityContext")...)
+	}
 
-	patch = append(patch, updateAnnotation(pod.Annotations, annotations)...) // adding "podmu/status: injected"
+	if annotations != nil {
+		patch = append(patch, updateAnnotation(pod.Annotations, annotations)...) // adding "podmu/status: injected"
+	}
 
 	return json.Marshal(patch)
 }
@@ -450,21 +455,37 @@ func (whsvr *WebhookServer) mutate(ar *v1beta1.AdmissionReview) *v1beta1.Admissi
 		}
 	}
 
+	var (
+		patchBytes []byte
+		err        error
+	)
 	cfg, err := loadConfig(filepath.Join(parameters.cfgDir, cfgFileName), cfgContentOverride)
 	if err != nil {
 		glog.Errorf("Failed to load configuration `%s`: %v", cfgFileName, err)
-	}
-
-	// Workaround: https://github.com/kubernetes/kubernetes/issues/57982
-	applyDefaultsWorkaround(cfg.Containers, cfg.Volumes)
-	annotations := map[string]string{admissionWebhookAnnotationStatusKey: "injected"}
-	patchBytes, err := createPatch(&pod, cfg, annotations)
-	if err != nil {
-		glog.Errorf("Mutation failed on ")
-		return &v1beta1.AdmissionResponse{
-			Result: &metav1.Status{
-				Message: err.Error(),
-			},
+		annotations := map[string]string{admissionWebhookAnnotationErrorKey: "loadConfig error: " + err.Error()}
+		patchBytes, err = createPatch(&pod, nil, annotations)
+		if err != nil {
+			glog.Errorf("Mutation to add annotations error messages failed on %s:%s: %v", pod.ObjectMeta.Namespace, pod.ObjectMeta.Name, err)
+			return &v1beta1.AdmissionResponse{
+				Allowed: true,
+				Result: &metav1.Status{
+					Message: err.Error(),
+				},
+			}
+		}
+	} else {
+		// Workaround: https://github.com/kubernetes/kubernetes/issues/57982
+		applyDefaultsWorkaround(cfg.Containers, cfg.Volumes)
+		annotations := map[string]string{admissionWebhookAnnotationStatusKey: "injected"}
+		patchBytes, err = createPatch(&pod, cfg, annotations)
+		if err != nil {
+			glog.Errorf("Mutation failed on %s:%s: %v", pod.ObjectMeta.Namespace, pod.ObjectMeta.Name, err)
+			return &v1beta1.AdmissionResponse{
+				Allowed: true,
+				Result: &metav1.Status{
+					Message: err.Error(),
+				},
+			}
 		}
 	}
 

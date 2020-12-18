@@ -13,6 +13,7 @@ ENV BINARY_LOCATION=/usr/local/bin/podmu \
 
 # install podmu binary
 COPY build/_output/bin/podmu ${BINARY_LOCATION}
+RUN chmod +x ${BINARY_LOCATION} && ${BINARY_LOCATION} --help
 
 # copy licenses
 RUN mkdir /licenses
