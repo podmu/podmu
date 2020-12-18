@@ -15,6 +15,11 @@ import (
 
 var parameters WhSvrParameters
 
+var (
+	admissionReviewKind = "AdmissionReview"
+	admissionReviewVer  = "admission.k8s.io/v1"
+)
+
 func main() {
 	// get command line parameters
 	flag.IntVar(&parameters.port, "port", 8443, "Webhook server port.")
@@ -23,6 +28,13 @@ func main() {
 	flag.StringVar(&parameters.keyFile, "tlsKeyFile", "/etc/webhook/certs/key.pem", "File containing the x509 private key to --tlsCertFile.")
 	flag.BoolVar(&parameters.insecureSkipVerify, "insecureSkipVerify", false, "ignore verification error on client proposed Certificates")
 	flag.Parse()
+
+	if os.Getenv("ADMISSION_REVIEW_KIND") != "" {
+		admissionReviewKind = os.Getenv("ADMISSION_REVIEW_KIND")
+	}
+	if os.Getenv("ADMISSION_REVIEW_VER") != "" {
+		admissionReviewVer = os.Getenv("ADMISSION_REVIEW_VER")
+	}
 
 	pair, err := tls.LoadX509KeyPair(parameters.certFile, parameters.keyFile)
 	if err != nil {
