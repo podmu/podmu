@@ -51,6 +51,7 @@ func main() {
 			glog.Errorf("Failed to listen and serve webhook server: %v", err)
 		}
 	}()
+	glog.Infof("Started listening to 0.0.0.0:%d with InsecureSkipVerify:%v", parameters.port, parameters.insecureSkipVerify)
 
 	// listening OS shutdown singal
 	signalChan := make(chan os.Signal, 1)
