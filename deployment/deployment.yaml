@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: podmu
-        image: khanhngobackend/podmu:latest
+        image: podmu/podmu:latest
         imagePullPolicy: Always
         args:
         - -port=8443

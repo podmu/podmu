@@ -1,12 +1,12 @@
 # Image URL to use all building/pushing image targets;
 # Use your own docker registry and image name for dev/test by overridding the
 # IMAGE_REPO, IMAGE_NAME and IMAGE_TAG environment variable.
-IMAGE_REPO ?= docker.io/khanhngobackend
+IMAGE_REPO ?= docker.io/podmu
 IMAGE_NAME ?= podmu
 
 # Github host to use for checking the source tree;
 # Override this variable ue with your own value if you're working on forked repo.
-GIT_HOST ?= github.com/khanhngobackend
+GIT_HOST ?= github.com/podmu
 
 PWD := $(shell pwd)
 BASE_DIR := $(shell basename $(PWD))
@@ -75,9 +75,9 @@ build:
 
 image: build-image push-image
 
-build-image: build
+build-image:
 	@echo "Building the docker image: $(IMAGE_REPO)/$(IMAGE_NAME):$(IMAGE_TAG)..."
-	@docker build -t $(IMAGE_REPO)/$(IMAGE_NAME):$(IMAGE_TAG) -f build/Dockerfile .
+	@docker build --progress plain --squash -t $(IMAGE_REPO)/$(IMAGE_NAME):$(IMAGE_TAG) -f build/Dockerfile .
 
 push-image: build-image
 	@echo "Pushing the docker image for $(IMAGE_REPO)/$(IMAGE_NAME):$(IMAGE_TAG) and $(IMAGE_REPO)/$(IMAGE_NAME):latest..."
