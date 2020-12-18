@@ -21,6 +21,7 @@ func main() {
 	flag.StringVar(&parameters.cfgDir, "cfgDir", "/etc/webhook/config", "Directory containing the configurations.")
 	flag.StringVar(&parameters.certFile, "tlsCertFile", "/etc/webhook/certs/cert.pem", "File containing the x509 Certificate for HTTPS.")
 	flag.StringVar(&parameters.keyFile, "tlsKeyFile", "/etc/webhook/certs/key.pem", "File containing the x509 private key to --tlsCertFile.")
+	flag.BoolVar(&parameters.insecureSkipVerify, "insecureSkipVerify", false, "ignore verification error on client proposed Certificates")
 	flag.Parse()
 
 	pair, err := tls.LoadX509KeyPair(parameters.certFile, parameters.keyFile)
@@ -30,14 +31,18 @@ func main() {
 
 	whsvr := &WebhookServer{
 		server: &http.Server{
-			Addr:      fmt.Sprintf(":%v", parameters.port),
-			TLSConfig: &tls.Config{Certificates: []tls.Certificate{pair}},
+			Addr: fmt.Sprintf(":%v", parameters.port),
+			TLSConfig: &tls.Config{
+				Certificates:       []tls.Certificate{pair},
+				InsecureSkipVerify: parameters.insecureSkipVerify,
+			},
 		},
 	}
 
 	// define http server and server handler
 	mux := http.NewServeMux()
 	mux.HandleFunc("/mutate", whsvr.serve)
+	mux.HandleFunc("/healthz", whsvr.healthz)
 	whsvr.server.Handler = mux
 
 	// start webhook server in new rountine

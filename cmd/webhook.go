@@ -46,10 +46,11 @@ type WebhookServer struct {
 
 // Webhook Server parameters
 type WhSvrParameters struct {
-	port     int    // webhook server port
-	certFile string // path to the x509 certificate for https
-	keyFile  string // path to the x509 private key matching `CertFile`
-	cfgDir   string // path to configuration dir
+	insecureSkipVerify bool   // skip verifying client Certificates
+	port               int    // webhook server port
+	certFile           string // path to the x509 certificate for https
+	keyFile            string // path to the x509 private key matching `CertFile`
+	cfgDir             string // path to configuration dir
 }
 
 type Config struct {
@@ -554,4 +555,8 @@ func (whsvr *WebhookServer) serve(w http.ResponseWriter, r *http.Request) {
 		glog.Errorf("Can't write response: %v", err)
 		http.Error(w, fmt.Sprintf("could not write response: %v", err), http.StatusInternalServerError)
 	}
+}
+
+func (whsvr *WebhookServer) healthz(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintf(w, "Hello, %+v", parameters)
 }

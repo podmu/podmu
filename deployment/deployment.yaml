@@ -16,28 +16,50 @@ spec:
         app: podmu
     spec:
       containers:
-        - name: podmu
-          image: khanhngobackend/podmu:latest
-          imagePullPolicy: IfNotPresent
-          args:
-          - -port=8443
-          - -cfgDir=/etc/webhook/config
-          - -tlsCertFile=/etc/webhook/certs/cert.pem
-          - -tlsKeyFile=/etc/webhook/certs/key.pem
-          - -alsologtostderr
-          - -v=4
-          - 2>&1
-          volumeMounts:
-          - name: webhook-certs
-            mountPath: /etc/webhook/certs
-            readOnly: true
-          - name: webhook-config
-            mountPath: /etc/webhook/config
-            readOnly: true
+      - name: podmu
+        image: khanhngobackend/podmu:latest
+        imagePullPolicy: Always
+        args:
+        - -port=8443
+        - -cfgDir=/etc/webhook/config
+        - -tlsCertFile=/etc/webhook/certs/cert.pem
+        - -tlsKeyFile=/etc/webhook/certs/key.pem
+        - -insecureSkipVerify=false
+        - -alsologtostderr
+        - -v=4
+        - 2>&1
+        ports:
+        - name: default-port
+          containerPort: 8443
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: default-port
+            scheme: HTTPS
+          initialDelaySeconds: 5
+          periodSeconds: 30
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: default-port
+            scheme: HTTPS
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        volumeMounts:
+        - name: webhook-certs
+          mountPath: /etc/webhook/certs
+          readOnly: true
+        - name: webhook-config
+          mountPath: /etc/webhook/config
+          readOnly: true
+        resources:
+          limits:
+            cpu: 100m
+            memory: 50Mi
       volumes:
       - name: webhook-certs
         secret:
           secretName: podmu-certs
       - name: webhook-config
         configMap:
-          name: podmu-configmap
+          name: podmu-cm
