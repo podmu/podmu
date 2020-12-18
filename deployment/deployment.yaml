@@ -19,6 +19,9 @@ spec:
       - name: podmu
         image: podmu/podmu:latest
         imagePullPolicy: Always
+        env:
+        - name: GODEBUG
+          value: x509ignoreCN=0
         args:
         - -port=8443
         - -cfgDir=/etc/webhook/config
@@ -26,7 +29,7 @@ spec:
         - -tlsKeyFile=/etc/webhook/certs/key.pem
         - -insecureSkipVerify=false
         - -alsologtostderr
-        - -v=4
+        - -v=6
         - 2>&1
         ports:
         - name: default-port
