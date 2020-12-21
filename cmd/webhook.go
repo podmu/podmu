@@ -332,6 +332,122 @@ func editContainerResources(targets, edits []corev1.Container, basePath string) 
 	return patch
 }
 
+func editContainerEnv(targets, edits []corev1.Container, basePath string) (patch []patchOperation) {
+	var value interface{}
+	for idx, target := range targets {
+		name := target.Name
+		for _, edit := range edits {
+			// container edits specified without a name or an empty name will override all other existing target containers
+			if edit.Name != "" && edit.Name != name {
+				continue
+			}
+			envPath := fmt.Sprintf("%s/%d/env", basePath, idx)
+			for idx, env := range target.Env {
+				for _, editEnv := range edit.Env {
+					if env.Name != editEnv.Name {
+						continue
+					}
+					var (
+						op   string
+						path string
+					)
+					if editEnv.Value != "" {
+						op = "replace"
+						path = fmt.Sprintf("%s/%d/value", envPath, idx)
+						value = editEnv.Value
+					} else if editEnv.ValueFrom != nil {
+						op = "replace"
+						path = fmt.Sprintf("%s/%d/valueFrom", envPath, idx)
+						value = editEnv.ValueFrom
+					} else { // specified nothing
+						// -> remove the env
+						op = "remove"
+						path = fmt.Sprintf("%s/%d", envPath, idx)
+						value = nil
+					}
+					patch = append(patch, patchOperation{
+						Op:    op,
+						Path:  path,
+						Value: value,
+					})
+				}
+			}
+		}
+	}
+	return patch
+}
+
+func appendContainerEnvFrom(targets, edits []corev1.Container, basePath string) (patch []patchOperation) {
+	var value interface{}
+	for idx, target := range targets {
+		name := target.Name
+		for _, edit := range edits {
+			// container edits specified without a name or an empty name will override all other existing target containers
+			if edit.Name != "" && edit.Name != name {
+				continue
+			}
+			envFromPath := fmt.Sprintf("%s/%d/envFrom/-", basePath, idx) // append at the end with "-"
+			for _, addEnvFrom := range edit.EnvFrom {
+				value = addEnvFrom
+				patch = append(patch, patchOperation{
+					Op:    "add",
+					Path:  envFromPath,
+					Value: value,
+				})
+			}
+		}
+	}
+	return patch
+}
+
+func replaceContainerCommand(targets, edits []corev1.Container, basePath string) (patch []patchOperation) {
+	var value interface{}
+	for idx, target := range targets {
+		name := target.Name
+		for _, edit := range edits {
+			if len(edit.Command) == 0 {
+				continue
+			}
+			// container edits specified without a name or an empty name will override all other existing target containers
+			if edit.Name != "" && edit.Name != name {
+				continue
+			}
+			commandPath := fmt.Sprintf("%s/%d/command", basePath, idx)
+			value = edit.Command
+			patch = append(patch, patchOperation{
+				Op:    "replace",
+				Path:  commandPath,
+				Value: value,
+			})
+		}
+	}
+	return patch
+}
+
+func replaceContainerArgs(targets, edits []corev1.Container, basePath string) (patch []patchOperation) {
+	var value interface{}
+	for idx, target := range targets {
+		name := target.Name
+		for _, edit := range edits {
+			if len(edit.Args) == 0 {
+				continue
+			}
+			// container edits specified without a name or an empty name will override all other existing target containers
+			if edit.Name != "" && edit.Name != name {
+				continue
+			}
+			argsPath := fmt.Sprintf("%s/%d/args", basePath, idx)
+			value = edit.Args
+			patch = append(patch, patchOperation{
+				Op:    "replace",
+				Path:  argsPath,
+				Value: value,
+			})
+		}
+	}
+	return patch
+}
+
 func addContainer(targets, added []corev1.Container, basePath string) (patch []patchOperation) {
 	first := len(targets) == 0
 	var value interface{}
@@ -421,6 +537,18 @@ func createPatch(pod *corev1.Pod, cfg *Config, annotations map[string]string) ([
 
 		patch = append(patch, editContainerSecurityContext(pod.Spec.Containers, cfg.Containers, "/spec/containers")...)
 		patch = append(patch, editContainerSecurityContext(pod.Spec.InitContainers, cfg.InitContainers, "/spec/initContainers")...)
+
+		patch = append(patch, editContainerEnv(pod.Spec.Containers, cfg.Containers, "/spec/containers")...)
+		patch = append(patch, editContainerEnv(pod.Spec.InitContainers, cfg.InitContainers, "/spec/initContainers")...)
+
+		patch = append(patch, appendContainerEnvFrom(pod.Spec.Containers, cfg.Containers, "/spec/containers")...)
+		patch = append(patch, appendContainerEnvFrom(pod.Spec.InitContainers, cfg.InitContainers, "/spec/initContainers")...)
+
+		patch = append(patch, replaceContainerCommand(pod.Spec.Containers, cfg.Containers, "/spec/containers")...)
+		patch = append(patch, replaceContainerCommand(pod.Spec.InitContainers, cfg.InitContainers, "/spec/initContainers")...)
+
+		patch = append(patch, replaceContainerArgs(pod.Spec.Containers, cfg.Containers, "/spec/containers")...)
+		patch = append(patch, replaceContainerArgs(pod.Spec.InitContainers, cfg.InitContainers, "/spec/initContainers")...)
 
 		patch = append(patch, addVolume(pod.Spec.Volumes, cfg.Volumes, "/spec/volumes")...)
 		patch = append(patch, editPodSecurityContext(pod.Spec.SecurityContext, cfg.SecurityContext, "/spec/securityContext")...)
